@@ -1,11 +1,967 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus</title>
-    </head>
-    <body>
-        PakePlus
-    </body>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>智购追踪</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Babel for JSX support in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background-color: #F2F2F7; /* iOS System Gray 6 */
+        color: #000000;
+        -webkit-tap-highlight-color: transparent;
+      }
+      
+      /* Hide Scrollbar */
+      ::-webkit-scrollbar {
+        width: 0px;
+        background: transparent;
+      }
+
+      /* Animations */
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes slideUpModal {
+        from { transform: translateY(100%); }
+        to { transform: translateY(0); }
+      }
+      @keyframes scaleIn {
+        from { transform: scale(0.95); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+
+      .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
+      .animate-slideUpModal { animation: slideUpModal 0.4s cubic-bezier(0.32, 0.72, 0, 1) forwards; }
+      .animate-scaleIn { animation: scaleIn 0.2s ease-out forwards; }
+
+      /* iOS Glass Effect */
+      .ios-glass {
+        background-color: rgba(255, 255, 255, 0.75);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+      }
+      
+      /* Toast positioning */
+      .toast-container {
+        position: fixed;
+        top: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        width: max-content;
+        max-width: 90vw;
+      }
+    </style>
+    
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "recharts": "https://esm.sh/recharts@2.12.2?external=react,react-dom",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react,react-dom",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.35.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+      import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { 
+        Plus, CheckCircle, Circle, User, ShoppingBag, AlertCircle, 
+        Edit2, ExternalLink, Tag, ChevronRight, 
+        Download, Upload, ShieldCheck, X 
+      } from 'lucide-react';
+      import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
+
+      // --- Constants & Enums ---
+      const PurchaseStatus = {
+        PLANNED: 'planned',
+        BOUGHT: 'bought'
+      };
+
+      const UsageStatus = {
+        NEW: 'new',
+        IN_USE: 'in_use',
+        FINISHED: 'finished',
+        IDLE: 'idle',
+        RETURNED: 'returned'
+      };
+
+      const UnitCostType = {
+        PER_ITEM: 'per_item',
+        PER_USE: 'per_use',
+        PER_DAY: 'per_day',
+        PER_GRAM: 'per_gram',
+        TOTAL: 'total'
+      };
+
+      const CATEGORIES = [
+        '数码/电器', '服饰/鞋包', '美妆/护肤', '食品/饮料', 
+        '家居/日用', '图书/文具', '运动/户外', '虚拟/服务', '其他'
+      ];
+
+      const STATUS_LABELS = {
+        [PurchaseStatus.PLANNED]: '待购买',
+        [PurchaseStatus.BOUGHT]: '已购买'
+      };
+
+      const USAGE_STATUS_LABELS = {
+        [UsageStatus.NEW]: '全新',
+        [UsageStatus.IN_USE]: '使用中',
+        [UsageStatus.FINISHED]: '已用完',
+        [UsageStatus.IDLE]: '闲置',
+        [UsageStatus.RETURNED]: '已退货'
+      };
+
+      const UNIT_COST_TYPE_LABELS = {
+        [UnitCostType.PER_ITEM]: '每件',
+        [UnitCostType.PER_USE]: '每次',
+        [UnitCostType.PER_DAY]: '每天',
+        [UnitCostType.PER_GRAM]: '每单位(g/ml)',
+        [UnitCostType.TOTAL]: '总计'
+      };
+
+      const DEFAULT_FORM_DATA = {
+        name: '',
+        category: '其他',
+        status: PurchaseStatus.PLANNED,
+        listPrice: 0,
+        actualPrice: 0,
+        discountRate: 0,
+        purchaseDate: new Date().toISOString().split('T')[0],
+        usageStatus: UsageStatus.NEW,
+        unitCostType: UnitCostType.PER_ITEM,
+        unitCost: 0,
+        link: '',
+        notes: ''
+      };
+
+      // --- Services ---
+      const STORAGE_KEY = 'smart_shop_items_v1';
+
+      const getItems = () => {
+        try {
+          const data = localStorage.getItem(STORAGE_KEY);
+          return data ? JSON.parse(data) : [];
+        } catch (e) {
+          console.error("Failed to load items", e);
+          return [];
+        }
+      };
+
+      const saveItem = (item) => {
+        const items = getItems();
+        const index = items.findIndex((i) => i.id === item.id);
+        let newItems;
+        if (index >= 0) {
+          newItems = [...items];
+          newItems[index] = item;
+        } else {
+          newItems = [item, ...items];
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(newItems));
+        return newItems;
+      };
+
+      const deleteItem = (id) => {
+        const items = getItems();
+        const newItems = items.filter((i) => i.id !== id);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(newItems));
+        return newItems;
+      };
+
+      const generateId = () => {
+        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+      };
+
+      // --- CSV Service ---
+      const HEADERS = {
+        id: 'ID',
+        name: '商品名称',
+        category: '类别',
+        status: '购买状态',
+        listPrice: '标价',
+        actualPrice: '实际价格',
+        discountRate: '折扣率',
+        purchaseDate: '购买日期',
+        usageStatus: '使用状态',
+        unitCostType: '单位花费类型',
+        unitCost: '单位花费',
+        link: '购买链接',
+        notes: '备注',
+        createdAt: '创建时间'
+      };
+
+      const REVERSE_HEADERS = Object.entries(HEADERS).reduce((acc, [key, value]) => {
+        acc[value] = key;
+        return acc;
+      }, {});
+
+      const exportToCSV = (items) => {
+        const headerRow = Object.values(HEADERS).join(',');
+        const rows = items.map(item => {
+          return Object.keys(HEADERS).map(key => {
+            const val = item[key];
+            const strVal = val === undefined || val === null ? '' : String(val);
+            if (strVal.includes(',') || strVal.includes('"') || strVal.includes('\n')) {
+              return `"${strVal.replace(/"/g, '""')}"`;
+            }
+            return strVal;
+          }).join(',');
+        });
+
+        const csvContent = '\uFEFF' + [headerRow, ...rows].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `智购追踪_数据备份_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      const parseCSV = async (file) => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const text = e.target?.result;
+            if (!text) return resolve([]);
+            
+            const lines = text.split(/\r\n|\n/);
+            if (lines.length < 2) return resolve([]);
+
+            const headerLine = lines[0];
+            const headers = headerLine.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            
+            const items = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (!line) continue;
+              
+              const row = [];
+              let inQuote = false;
+              let currentCell = '';
+              for (let j = 0; j < line.length; j++) {
+                  const char = line[j];
+                  const nextChar = line[j + 1];
+                  if (char === '"') {
+                      if (inQuote && nextChar === '"') {
+                          currentCell += '"';
+                          j++;
+                      } else {
+                          inQuote = !inQuote;
+                      }
+                  } else if (char === ',' && !inQuote) {
+                      row.push(currentCell);
+                      currentCell = '';
+                  } else {
+                      currentCell += char;
+                  }
+              }
+              row.push(currentCell);
+
+              const itemObj = {};
+              headers.forEach((h, index) => {
+                 const key = REVERSE_HEADERS[h];
+                 if (!key) return;
+                 let val = row[index] || '';
+                 if (['listPrice', 'actualPrice', 'discountRate', 'unitCost', 'createdAt'].includes(key)) {
+                     itemObj[key] = parseFloat(val) || 0;
+                 } else {
+                     itemObj[key] = val;
+                 }
+              });
+
+              if (itemObj.name) {
+                   items.push({
+                       id: itemObj.id || generateId(),
+                       name: itemObj.name,
+                       category: itemObj.category || '其他',
+                       status: Object.values(PurchaseStatus).includes(itemObj.status) ? itemObj.status : PurchaseStatus.PLANNED,
+                       listPrice: itemObj.listPrice || 0,
+                       actualPrice: itemObj.actualPrice || 0,
+                       discountRate: itemObj.discountRate || 0,
+                       purchaseDate: itemObj.purchaseDate || '',
+                       usageStatus: Object.values(UsageStatus).includes(itemObj.usageStatus) ? itemObj.usageStatus : UsageStatus.NEW,
+                       unitCostType: Object.values(UnitCostType).includes(itemObj.unitCostType) ? itemObj.unitCostType : UnitCostType.PER_ITEM,
+                       unitCost: itemObj.unitCost || 0,
+                       link: itemObj.link || '',
+                       notes: itemObj.notes || '',
+                       createdAt: itemObj.createdAt || Date.now()
+                   });
+              }
+            }
+            resolve(items);
+          };
+          reader.onerror = () => reject(new Error("File reading failed"));
+          reader.readAsText(file);
+        });
+      };
+
+      // --- Components ---
+
+      const COLORS = ['#007AFF', '#FF2D55', '#5856D6', '#FF9500', '#5AC8FA', '#4CD964', '#FFCC00', '#8E8E93'];
+
+      const Stats = ({ items }) => {
+        const boughtItems = useMemo(() => items.filter(i => i.status === PurchaseStatus.BOUGHT), [items]);
+        const totalSpent = useMemo(() => boughtItems.reduce((acc, curr) => acc + (curr.actualPrice || 0), 0), [boughtItems]);
+        const totalSaved = useMemo(() => boughtItems.reduce((acc, curr) => {
+          if (curr.listPrice && curr.actualPrice) {
+            return acc + Math.max(0, curr.listPrice - curr.actualPrice);
+          }
+          return acc;
+        }, 0), [boughtItems]);
+
+        const categoryData = useMemo(() => {
+          const map = new Map();
+          boughtItems.forEach(item => {
+            const current = map.get(item.category) || 0;
+            map.set(item.category, current + item.actualPrice);
+          });
+          return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+        }, [boughtItems]);
+
+        if (boughtItems.length === 0) return null;
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="bg-white rounded-[22px] p-5 shadow-sm flex flex-col justify-between h-40 relative overflow-hidden">
+              <div className="z-10">
+                  <p className="text-[13px] font-semibold text-[#8E8E93] uppercase tracking-wide">总支出</p>
+                  <h2 className="text-[34px] font-bold text-black mt-0.5">¥{totalSpent.toLocaleString('zh-CN')}</h2>
+              </div>
+              <div className="z-10">
+                  <span className="inline-flex items-center gap-1 bg-[#F2F2F7] px-2.5 py-1 rounded-full text-[12px] font-medium text-[#007AFF]">
+                      {boughtItems.length} 笔订单
+                  </span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[22px] p-5 shadow-sm flex flex-col justify-between h-40">
+              <div>
+                  <p className="text-[13px] font-semibold text-[#8E8E93] uppercase tracking-wide">累计节省</p>
+                  <h2 className="text-[34px] font-bold text-[#34C759] mt-0.5">¥{totalSaved.toLocaleString('zh-CN')}</h2>
+              </div>
+              <p className="text-[13px] text-[#8E8E93]">积少成多</p>
+            </div>
+
+            <div className="md:col-span-2 bg-white rounded-[22px] p-5 shadow-sm">
+              <h3 className="text-[17px] font-bold text-black mb-4">支出分布</h3>
+              <div className="h-48 w-full flex">
+                   <div className="flex-1 h-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                          <Pie
+                              data={categoryData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={40}
+                              outerRadius={60}
+                              paddingAngle={5}
+                              dataKey="value"
+                          >
+                              {categoryData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+                              ))}
+                          </Pie>
+                          <Tooltip formatter={(value) => `¥${value}`} contentStyle={{borderRadius: 12, border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                          </PieChart>
+                      </ResponsiveContainer>
+                   </div>
+                   <div className="w-1/3 flex flex-col justify-center gap-2">
+                      {categoryData.slice(0, 4).map((entry, index) => (
+                          <div key={entry.name} className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length]}}></div>
+                              <span className="text-[11px] text-[#3C3C43]/60 truncate">{entry.name}</span>
+                          </div>
+                      ))}
+                   </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const ItemList = ({ items, filterStatus, onEdit, onDelete }) => {
+        const filteredItems = items.filter(item => item.status === filterStatus);
+
+        if (filteredItems.length === 0) {
+          return (
+            <div className="flex flex-col items-center justify-center py-20 animate-fadeIn">
+              <div className="w-16 h-16 bg-[#E5E5EA] rounded-full flex items-center justify-center mb-4 text-[#8E8E93]">
+                  <Tag size={24} />
+              </div>
+              <p className="text-[#8E8E93] text-[15px]">暂无内容</p>
+            </div>
+          );
+        }
+
+        const displayItems = [...filteredItems].reverse();
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {displayItems.map((item, index) => (
+              <div 
+                key={item.id} 
+                onClick={() => onEdit(item)}
+                className="bg-white rounded-[18px] p-4 shadow-sm active:scale-[0.98] transition-transform duration-200 cursor-pointer relative animate-fadeIn"
+                style={{ animationDelay: `${index * 0.05}s` }}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="bg-[#F2F2F7] px-2 py-0.5 rounded-md">
+                      <span className="text-[11px] font-semibold text-[#8E8E93]">{item.category}</span>
+                  </div>
+                  {item.discountRate > 0 && (
+                      <span className="text-[11px] font-bold text-[#FF2D55]">-{Math.round(item.discountRate)}%</span>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center mb-1">
+                   <h3 className="text-[17px] font-semibold text-black truncate pr-4">{item.name}</h3>
+                </div>
+
+                <div className="flex items-baseline gap-2 mb-3">
+                   <span className="text-[20px] font-bold text-black">¥{item.actualPrice}</span>
+                   {item.listPrice > item.actualPrice && (
+                       <span className="text-[13px] text-[#8E8E93] line-through">¥{item.listPrice}</span>
+                   )}
+                </div>
+
+                <div className="flex items-center justify-between text-[13px] text-[#8E8E93]">
+                   <div className="flex items-center gap-2">
+                       {item.status === PurchaseStatus.BOUGHT ? (
+                           <span>{item.purchaseDate}</span>
+                       ) : (
+                          <span>计划中</span>
+                       )}
+                   </div>
+                   {item.link && (
+                       <div onClick={(e) => { e.stopPropagation(); window.open(item.link, '_blank'); }} className="p-1.5 bg-[#F2F2F7] rounded-full text-[#007AFF]">
+                           <ExternalLink size={14} />
+                       </div>
+                   )}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      };
+
+      const ItemForm = ({ initialData, onSubmit, onCancel }) => {
+        const [formData, setFormData] = useState({ ...DEFAULT_FORM_DATA, ...initialData });
+        const [isClosing, setIsClosing] = useState(false);
+
+        useEffect(() => {
+          if (formData.listPrice > 0 && formData.actualPrice > 0) {
+            const discount = ((formData.listPrice - formData.actualPrice) / formData.listPrice) * 100;
+            setFormData(prev => ({ ...prev, discountRate: parseFloat(discount.toFixed(1)) }));
+          }
+        }, [formData.listPrice, formData.actualPrice]);
+
+        const handleChange = (e) => {
+          const { name, value } = e.target;
+          setFormData(prev => ({
+            ...prev,
+            [name]: name.includes('Price') || name === 'discountRate' || name === 'unitCost' 
+              ? parseFloat(value) || 0 
+              : value
+          }));
+        };
+
+        const handleClose = () => {
+          setIsClosing(true);
+          setTimeout(onCancel, 300);
+        };
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          onSubmit(formData);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+            <div 
+              className={`absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ${isClosing ? 'opacity-0' : 'opacity-100'}`} 
+              onClick={handleClose}
+            ></div>
+            
+            <div 
+              className={`
+                  bg-[#F2F2F7] w-full sm:max-w-md h-[92vh] sm:h-auto sm:max-h-[85vh] 
+                  rounded-t-[20px] sm:rounded-[20px] shadow-2xl overflow-hidden flex flex-col
+                  transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]
+                  ${isClosing ? 'translate-y-full sm:scale-95 sm:opacity-0' : 'translate-y-0 animate-slideUpModal sm:animate-scaleIn'}
+              `}
+            >
+              <div className="bg-[#F2F2F7]/80 backdrop-blur-xl border-b border-[#3C3C43]/10 h-14 flex items-center justify-between px-4 shrink-0 z-10">
+                <button onClick={handleClose} type="button" className="text-[17px] text-[#007AFF] font-normal active:opacity-50">
+                  取消
+                </button>
+                <span className="text-[17px] font-semibold text-black">
+                  {initialData && Object.keys(initialData).length > 0 ? '编辑' : '新项目'}
+                </span>
+                <button onClick={handleSubmit} type="button" className="text-[17px] text-[#007AFF] font-semibold active:opacity-50">
+                  完成
+                </button>
+              </div>
+              
+              <div className="overflow-y-auto flex-1 p-4 pb-10">
+                <form onSubmit={handleSubmit} className="space-y-6">
+                  <div className="bg-white rounded-[12px] overflow-hidden">
+                      <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                          <label className="w-20 text-[16px] text-black">名称</label>
+                          <input
+                              type="text"
+                              name="name"
+                              required
+                              value={formData.name}
+                              onChange={handleChange}
+                              className="flex-1 text-[16px] outline-none text-right bg-transparent placeholder:text-[#C7C7CC]"
+                              placeholder="商品名称"
+                          />
+                      </div>
+                      <div className="flex items-center px-4 py-3 relative">
+                          <label className="w-20 text-[16px] text-black">类别</label>
+                          <select
+                              name="category"
+                              value={formData.category}
+                              onChange={handleChange}
+                              className="flex-1 text-[16px] outline-none text-right bg-transparent appearance-none pr-5 text-[#8E8E93]"
+                          >
+                              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                          <ChevronRight size={16} className="absolute right-3 text-[#C7C7CC] pointer-events-none" />
+                      </div>
+                  </div>
+
+                  <div className="bg-white rounded-[12px] p-1">
+                       <div className="flex bg-[#767680]/15 p-0.5 rounded-[9px]">
+                          {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                              <button
+                              key={key}
+                              type="button"
+                              onClick={() => setFormData(prev => ({ ...prev, status: key }))}
+                              className={`flex-1 py-1.5 text-[13px] font-medium rounded-[7px] transition-all ${
+                                  formData.status === key ? 'bg-white shadow-sm text-black' : 'text-black/60'
+                              }`}
+                              >
+                              {label}
+                              </button>
+                          ))}
+                       </div>
+                  </div>
+
+                  <div>
+                      <h4 className="text-[13px] text-[#8E8E93] uppercase ml-4 mb-2">价格</h4>
+                      <div className="bg-white rounded-[12px] overflow-hidden">
+                          <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                              <label className="flex-1 text-[16px] text-black">实际价格</label>
+                              <input
+                                  type="number"
+                                  name="actualPrice"
+                                  required
+                                  min="0"
+                                  step="0.01"
+                                  value={formData.actualPrice}
+                                  onChange={handleChange}
+                                  className="w-24 text-[16px] text-[#007AFF] font-semibold outline-none text-right bg-transparent"
+                                  placeholder="0"
+                              />
+                              <span className="ml-1 text-black">¥</span>
+                          </div>
+                          <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                              <label className="flex-1 text-[16px] text-black">原价/标价</label>
+                              <input
+                                  type="number"
+                                  name="listPrice"
+                                  min="0"
+                                  step="0.01"
+                                  value={formData.listPrice}
+                                  onChange={handleChange}
+                                  className="w-24 text-[16px] outline-none text-right bg-transparent"
+                                  placeholder="0"
+                              />
+                               <span className="ml-1 text-black">¥</span>
+                          </div>
+                      </div>
+                  </div>
+
+                  {formData.status === PurchaseStatus.BOUGHT && (
+                      <div className="animate-fadeIn">
+                           <h4 className="text-[13px] text-[#8E8E93] uppercase ml-4 mb-2">购买详情</h4>
+                           <div className="bg-white rounded-[12px] overflow-hidden">
+                              <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                                  <label className="w-24 text-[16px] text-black">日期</label>
+                                  <input
+                                      type="date"
+                                      name="purchaseDate"
+                                      value={formData.purchaseDate}
+                                      onChange={handleChange}
+                                      className="flex-1 text-[16px] outline-none text-right bg-transparent text-[#8E8E93]"
+                                  />
+                              </div>
+                              <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA] relative">
+                                  <label className="w-24 text-[16px] text-black">使用状态</label>
+                                  <select
+                                      name="usageStatus"
+                                      value={formData.usageStatus}
+                                      onChange={handleChange}
+                                      className="flex-1 text-[16px] outline-none text-right bg-transparent appearance-none pr-5 text-[#8E8E93]"
+                                  >
+                                      {Object.entries(USAGE_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                  </select>
+                                  <ChevronRight size={16} className="absolute right-3 text-[#C7C7CC] pointer-events-none" />
+                              </div>
+                              <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                                  <label className="w-24 text-[16px] text-black">单位类型</label>
+                                  <select
+                                      name="unitCostType"
+                                      value={formData.unitCostType}
+                                      onChange={handleChange}
+                                      className="flex-1 text-[16px] outline-none text-right bg-transparent appearance-none text-[#8E8E93] pr-2"
+                                  >
+                                      {Object.entries(UNIT_COST_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                  </select>
+                              </div>
+                               <div className="flex items-center px-4 py-3">
+                                  <label className="flex-1 text-[16px] text-black">单位成本</label>
+                                  <input
+                                      type="number"
+                                      name="unitCost"
+                                      min="0"
+                                      step="0.01"
+                                      value={formData.unitCost}
+                                      onChange={handleChange}
+                                      className="w-24 text-[16px] outline-none text-right bg-transparent text-[#8E8E93]"
+                                      placeholder="0"
+                                  />
+                              </div>
+                           </div>
+                      </div>
+                  )}
+
+                  <div className="bg-white rounded-[12px] overflow-hidden">
+                      <div className="flex items-center px-4 py-3 border-b border-[#E5E5EA]">
+                          <label className="w-20 text-[16px] text-black">链接</label>
+                          <input
+                              type="url"
+                              name="link"
+                              value={formData.link}
+                              onChange={handleChange}
+                              placeholder="https://"
+                              className="flex-1 text-[16px] outline-none text-right bg-transparent placeholder:text-[#C7C7CC]"
+                          />
+                      </div>
+                       <div className="p-3">
+                          <textarea
+                              name="notes"
+                              value={formData.notes}
+                              onChange={handleChange}
+                              rows={3}
+                              placeholder="备注..."
+                              className="w-full text-[16px] outline-none bg-transparent resize-none placeholder:text-[#C7C7CC]"
+                          />
+                      </div>
+                  </div>
+
+                </form>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const ProfileTab = ({ items, onImport }) => {
+        const fileInputRef = useRef(null);
+
+        const handleFileChange = async (e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            if (window.confirm('导入数据将覆盖或合并现有数据，建议先备份。继续导入吗？')) {
+              try {
+                const importedItems = await parseCSV(file);
+                if (importedItems.length > 0) {
+                  onImport(importedItems);
+                  alert(`成功导入 ${importedItems.length} 条数据`);
+                } else {
+                  alert('未在文件中找到有效数据');
+                }
+              } catch (error) {
+                alert('导入失败，请检查文件格式');
+              }
+            }
+            if (fileInputRef.current) fileInputRef.current.value = '';
+          }
+        };
+
+        return (
+          <div className="animate-fadeIn space-y-6 pb-6">
+            <div>
+               <h3 className="text-[20px] font-bold text-black mb-4 px-1">消费概览</h3>
+               <Stats items={items} />
+            </div>
+
+            <div>
+              <h3 className="text-[20px] font-bold text-black mb-4 px-1">数据管理</h3>
+              <div className="bg-white rounded-[18px] shadow-sm overflow-hidden">
+                  
+                  <button 
+                      onClick={() => exportToCSV(items)}
+                      className="w-full flex items-center px-5 py-4 bg-white active:bg-gray-50 transition-colors border-b border-gray-100"
+                  >
+                      <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center mr-3">
+                          <Download size={18} />
+                      </div>
+                      <div className="flex-1 text-left">
+                          <span className="text-[16px] font-medium text-black block">导出数据 (CSV)</span>
+                          <span className="text-[13px] text-gray-400">备份您的所有购物记录</span>
+                      </div>
+                      <ChevronRight size={18} className="text-gray-300" />
+                  </button>
+
+                  <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full flex items-center px-5 py-4 bg-white active:bg-gray-50 transition-colors"
+                  >
+                      <div className="w-8 h-8 rounded-full bg-green-50 text-green-600 flex items-center justify-center mr-3">
+                          <Upload size={18} />
+                      </div>
+                      <div className="flex-1 text-left">
+                          <span className="text-[16px] font-medium text-black block">导入数据 (CSV)</span>
+                          <span className="text-[13px] text-gray-400">从 CSV 文件恢复记录</span>
+                      </div>
+                      <ChevronRight size={18} className="text-gray-300" />
+                  </button>
+                  <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      onChange={handleFileChange} 
+                      accept=".csv" 
+                      className="hidden" 
+                  />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-[20px] font-bold text-black mb-4 px-1">关于</h3>
+              <div className="bg-white rounded-[18px] shadow-sm p-5">
+                  <div className="flex items-center gap-3 mb-2">
+                      <div className="bg-gray-100 p-2 rounded-lg">
+                         <ShieldCheck size={24} className="text-gray-600" />
+                      </div>
+                      <div>
+                          <h4 className="font-semibold text-black">智购追踪</h4>
+                          <p className="text-xs text-gray-500">v1.1.0 (本地版)</p>
+                      </div>
+                  </div>
+                  <p className="text-[14px] text-gray-500 leading-relaxed mt-3">
+                      所有数据均存储在您的本地浏览器中，我们不会上传任何信息。请定期导出数据进行备份。
+                  </p>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const App = () => {
+        const [items, setItems] = useState([]);
+        const [activeTab, setActiveTab] = useState('bought');
+        const [isModalOpen, setIsModalOpen] = useState(false);
+        const [editingItem, setEditingItem] = useState(null);
+        const [toasts, setToasts] = useState([]);
+
+        useEffect(() => {
+          setItems(getItems());
+        }, []);
+
+        const showToast = (message, type = 'success') => {
+          const id = Date.now();
+          setToasts(prev => [...prev, { id, message, type }]);
+          setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+          }, 3000);
+        };
+
+        const handleSave = (data) => {
+          const newItem = {
+            ...data,
+            id: editingItem ? editingItem.id : generateId(),
+            createdAt: editingItem ? editingItem.createdAt : Date.now(),
+          };
+          const updatedItems = saveItem(newItem);
+          setItems(updatedItems);
+          setIsModalOpen(false);
+          setEditingItem(null);
+          showToast(editingItem ? '已更新' : '已添加');
+        };
+
+        const handleDelete = (id) => {
+          if (window.confirm('删除此项目？')) {
+            const updatedItems = deleteItem(id);
+            setItems(updatedItems);
+            showToast('已删除', 'info');
+          }
+        };
+
+        const handleEdit = (item) => {
+          setEditingItem(item);
+          setIsModalOpen(true);
+        };
+
+        const openNewModal = () => {
+          setEditingItem(null);
+          setIsModalOpen(true);
+        };
+
+        const handleImport = (importedItems) => {
+          let currentItems = getItems();
+          const newItems = [...importedItems, ...currentItems];
+          const uniqueItemsMap = new Map();
+          newItems.forEach(i => uniqueItemsMap.set(i.id, i));
+          const uniqueItems = Array.from(uniqueItemsMap.values());
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(uniqueItems));
+          setItems(uniqueItems);
+          showToast('数据导入成功', 'success');
+        };
+
+        const renderContent = () => {
+          switch (activeTab) {
+            case 'bought':
+              return (
+                <div className="animate-fadeIn min-h-[300px]">
+                   <ItemList 
+                    items={items} 
+                    filterStatus={PurchaseStatus.BOUGHT} 
+                    onEdit={handleEdit} 
+                    onDelete={handleDelete} 
+                  />
+                </div>
+              );
+            case 'planned':
+              return (
+                <div className="animate-fadeIn min-h-[300px]">
+                   <ItemList 
+                    items={items} 
+                    filterStatus={PurchaseStatus.PLANNED} 
+                    onEdit={handleEdit} 
+                    onDelete={handleDelete} 
+                  />
+                </div>
+              );
+            case 'profile':
+              return <ProfileTab items={items} onImport={handleImport} />;
+            default:
+              return null;
+          }
+        };
+
+        const getTitle = () => {
+          switch(activeTab) {
+            case 'bought': return '已购买';
+            case 'planned': return '待购买';
+            case 'profile': return '我的';
+          }
+        };
+
+        return (
+          <div className="min-h-screen bg-[#F2F2F7]">
+            {/* Toast */}
+            <div className="toast-container space-y-2 pointer-events-none flex flex-col items-center">
+              {toasts.map(toast => (
+                <div 
+                  key={toast.id} 
+                  className="pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-full shadow-lg bg-black text-white animate-scaleIn backdrop-blur-md"
+                >
+                  {toast.type === 'success' && <CheckCircle size={16} className="text-green-400" />}
+                  {toast.type === 'error' && <AlertCircle size={16} className="text-red-400" />}
+                  {toast.type === 'info' && <AlertCircle size={16} className="text-blue-400" />}
+                  <span className="text-sm font-medium">{toast.message}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Header */}
+            <header className="ios-glass border-b border-black/5 sticky top-0 z-30 transition-all duration-300">
+              <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+                <h1 className="text-[17px] font-semibold text-black">
+                  {getTitle()}
+                </h1>
+                {activeTab !== 'profile' && (
+                  <button 
+                    onClick={openNewModal}
+                    className="text-[#007AFF] active:opacity-50 transition-opacity p-1"
+                  >
+                    <Plus size={26} />
+                  </button>
+                )}
+              </div>
+            </header>
+
+            <main className="max-w-3xl mx-auto px-4 py-6 pb-28">
+              {renderContent()}
+            </main>
+
+            {/* Tab Bar */}
+            <div className="fixed bottom-0 left-0 right-0 bg-white/85 backdrop-blur-xl border-t border-black/5 z-40 pb-[env(safe-area-inset-bottom)]">
+              <div className="max-w-3xl mx-auto flex justify-around items-center h-14">
+                  <button 
+                    onClick={() => setActiveTab('bought')}
+                    className={`flex-1 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform ${activeTab === 'bought' ? 'text-[#007AFF]' : 'text-[#8E8E93]'}`}
+                  >
+                      <ShoppingBag size={24} fill={activeTab === 'bought' ? 'currentColor' : 'none'} strokeWidth={activeTab === 'bought' ? 0 : 2} />
+                      <span className="text-[10px] font-medium">已购买</span>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('planned')}
+                    className={`flex-1 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform ${activeTab === 'planned' ? 'text-[#007AFF]' : 'text-[#8E8E93]'}`}
+                  >
+                      <Circle size={24} fill={activeTab === 'planned' ? 'currentColor' : 'none'} strokeWidth={2} />
+                      <span className="text-[10px] font-medium">未购买</span>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('profile')}
+                    className={`flex-1 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform ${activeTab === 'profile' ? 'text-[#007AFF]' : 'text-[#8E8E93]'}`}
+                  >
+                      <User size={24} fill={activeTab === 'profile' ? 'currentColor' : 'none'} strokeWidth={2} />
+                      <span className="text-[10px] font-medium">我的</span>
+                  </button>
+              </div>
+            </div>
+
+            {isModalOpen && (
+              <ItemForm
+                initialData={editingItem || {
+                  status: activeTab === 'bought' ? PurchaseStatus.BOUGHT : PurchaseStatus.PLANNED
+                }}
+                onSubmit={handleSave}
+                onCancel={() => setIsModalOpen(false)}
+              />
+            )}
+          </div>
+        );
+      };
+
+      const root = createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
 </html>
