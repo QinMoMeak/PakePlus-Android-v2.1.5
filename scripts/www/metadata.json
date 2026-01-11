@@ -1,0 +1,5 @@
+{
+  "name": "Copy of 智购追踪 (SmartShop Tracker)",
+  "description": "一款智能购物追踪应用，帮助您记录已购和计划购买的物品。利用 AI 自动解析购物信息，统计花费，并计算折扣与单位成本。",
+  "requestFramePermissions": []
+}
